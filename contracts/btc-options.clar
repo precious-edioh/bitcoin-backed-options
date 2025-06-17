@@ -85,3 +85,78 @@
     (ok true)
   )
 )
+
+(define-read-only (get-current-btc-price)
+  (let (
+    (price (var-get btc-price))
+    (last-updated (var-get price-last-updated))
+    (validity-window (var-get price-validity-window))
+  )
+    (asserts! (> price u0) ERR_INVALID_PRICE)
+    (asserts! (< (- stacks-block-height last-updated) validity-window) ERR_STALE_PRICE)
+    (ok price)
+  )
+)
+
+(define-public (set-oracle-address (new-oracle principal))
+  (begin
+    (asserts! (is-contract-owner) ERR_NOT_AUTHORIZED)
+    (asserts! (not (is-eq new-oracle 'SP000000000000000000002Q6VF78)) ERR_INVALID_PARAMETER)
+    (var-set oracle-address new-oracle)
+    (ok true)
+  )
+)
+
+(define-public (set-price-validity-window (new-window uint))
+  (begin
+    (asserts! (is-contract-owner) ERR_NOT_AUTHORIZED)
+    (asserts! (and (>= new-window MIN_VALIDITY_WINDOW)
+                  (<= new-window MAX_VALIDITY_WINDOW)) ERR_INVALID_PARAMETER)
+    (var-set price-validity-window new-window)
+    (ok true)
+  )
+)
+
+;; Private Helpers
+(define-private (is-contract-owner)
+  (is-eq tx-sender CONTRACT_OWNER)
+)
+
+(define-private (check-expiry (option-id uint))
+  (let (
+    (opt (unwrap! (map-get? options option-id) ERR_OPTION_NOT_FOUND))
+    (now stacks-block-height)
+  )
+    (if (> now (get expiry opt))
+      ERR_OPTION_EXPIRED
+      (ok true))
+  )
+)
+
+(define-private (update-user-balance (user principal) (delta uint) (is-subtract bool))
+  (let (
+    (bal (default-to { sbtc-balance: u0, locked-collateral: u0 }
+           (map-get? user-balances user)))
+    (sbtc (get sbtc-balance bal))
+    (new-sbtc (if is-subtract
+                 (begin (asserts! (>= sbtc delta) ERR_INSUFFICIENT_BALANCE)
+                        (- sbtc delta))
+                 (+ sbtc delta)))
+  )
+    (ok (map-set user-balances user
+         (merge bal { sbtc-balance: new-sbtc })))
+  )
+)
+
+;; Public API
+
+;; Deposit sBTC
+(define-public (deposit-sbtc (amount uint))
+  (begin
+    (asserts! (and (>= amount MIN_DEPOSIT_AMOUNT)
+                   (<= amount MAX_DEPOSIT_AMOUNT)) ERR_INVALID_AMOUNT)
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    (try! (update-user-balance tx-sender amount false))
+    (ok true)
+  )
+)
